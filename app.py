@@ -5,7 +5,7 @@ import statistics
 from multiprocessing import Process, Queue
 import aiohttp
 from typing import List
-from flask import Flask, request, render_template
+from flask import Flask, request, render_template_string
 from urllib.parse import urlparse
 import logging
 
@@ -15,13 +15,81 @@ logger = logging.getLogger(__name__)
 
 # Configuration constants
 MAX_TOTAL = 10000
-MAX_PROCESSES = 5
-MAX_CONCURRENCY = 200
-MAX_RPS = 1000
+MAX_PROCESSES = 10  
+MAX_CONCURRENCY = 300 
+MAX_RPS = 10000  
 DEFAULT_TIMEOUT = 10
 
 # Flask app setup
 app = Flask(__name__)
+
+# HTML template
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Load Test Web</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f9; }
+        .container { max-width: 800px; margin: auto; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; }
+        form { margin-bottom: 20px; }
+        label { display: block; margin: 10px 0 5px; }
+        input, select, button { padding: 8px; margin-bottom: 10px; width: 100%; border-radius: 4px; border: 1px solid #ccc; }
+        button { background-color: #007bff; color: white; border: none; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        .result { margin-top: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        .error { color: red; }
+        pre { background: #f8f8f8; padding: 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>No1 Hub</h1>
+        <form method="POST" action="/">
+            <label for="url">URL to Test:</label>
+            <input type="text" id="url" name="url" placeholder="https://example.com" required>
+            <label for="mode">Test Mode:</label>
+            <select id="mode" name="mode">
+                <option value="normal">Normal</option>
+                <option value="max">Max (Super Strong)</option>
+            </select>
+            <button type="submit">Run Load Test</button>
+        </form>
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        {% if result %}
+        <div class="result">
+            <h2>Results</h2>
+            <p><strong>URL:</strong> {{ result.url }}</p>
+            <p><strong>Mode:</strong> {{ result.mode|capitalize }}</p>
+            <p><strong>Total Runtime:</strong> {{ "%.3f"|format(result.total_time) }}s</p>
+            <p><strong>Total Requests:</strong> {{ result.total_requests }}</p>
+            <p><strong>Successful:</strong> {{ result.total_success }}</p>
+            <p><strong>Errors:</strong> {{ result.total_errors }}</p>
+            <p><strong>Status Breakdown:</strong></p>
+            <pre>{{ result.status_breakdown }}</pre>
+            {% if result.latency_stats.mean %}
+            <p><strong>Latency Stats:</strong></p>
+            <pre>
+Min: {{ "%.4f"|format(result.latency_stats.min) }}s
+Mean: {{ "%.4f"|format(result.latency_stats.mean) }}s
+P50: {{ "%.4f"|format(result.latency_stats.p50) }}s
+P90: {{ "%.4f"|format(result.latency_stats.p90) }}s
+P95: {{ "%.4f"|format(result.latency_stats.p95) }}s
+Max: {{ "%.4f"|format(result.latency_stats.max) }}s
+            </pre>
+            {% endif %}
+            <p><strong>Throughput:</strong> {{ "%.2f"|format(result.throughput) }} req/s</p>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>
+"""
 
 async def single_request(session, method, url, timeout):
     start = time.perf_counter()
@@ -112,12 +180,12 @@ def load_test():
         try:
             parsed_url = urlparse(url)
             if not parsed_url.scheme or not parsed_url.netloc:
-                return render_template("index.html", error="Invalid URL provided.")
+                return render_template_string(HTML_TEMPLATE, error="Invalid URL provided.")
             domain = parsed_url.netloc
             logger.info(f"Domain: {domain}")
         except Exception as e:
             logger.error(f"Error parsing URL: {e}")
-            return render_template("index.html", error="Invalid URL format.")
+            return render_template_string(HTML_TEMPLATE, error="Invalid URL format.")
 
         # Configure test parameters based on mode
         if mode == "normal":
@@ -125,11 +193,11 @@ def load_test():
             processes = 2
             concurrency = 50
             ramp = 10
-        else:  # max
-            total = 5000
-            processes = 5
-            concurrency = 200
-            ramp = 5
+        else:  # max (super strong)
+            total = 10000  # Tăng để spam mạnh hơn
+            processes = 10  # Tăng để spam mạnh hơn
+            concurrency = 300  # Tăng để spam mạnh hơn
+            ramp = 1  # Giảm để tăng RPS nhanh chóng
 
         method = "GET"
         timeout = DEFAULT_TIMEOUT
@@ -140,7 +208,7 @@ def load_test():
         estimated_rps = total / max(1, ramp if ramp > 0 else 1)
         logger.info(f"Estimated RPS: {estimated_rps}")
         if estimated_rps > MAX_RPS:
-            return render_template("index.html", error=f"Estimated RPS ({estimated_rps:.1f}) exceeds safety cap ({MAX_RPS}). Reduce load or increase ramp-up.")
+            return render_template_string(HTML_TEMPLATE, error=f"Estimated RPS ({estimated_rps:.1f}) exceeds safety cap ({MAX_RPS}). Reduce load or increase ramp-up.")
 
         # Start the test
         logger.info(f"Starting load test on {url} in {mode} mode...")
@@ -175,9 +243,9 @@ def load_test():
             "throughput": final["total_requests"] / max(total_time, 1e-6)
         }
 
-        return render_template("index.html", result=result)
+        return render_template_string(HTML_TEMPLATE, result=result)
 
-    return render_template("index.html")
+    return render_template_string(HTML_TEMPLATE)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=5000, debug=True)
